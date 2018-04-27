@@ -20,8 +20,9 @@ We had done:
       try error with t2 -> t2    (E-TryError)
       and   (E-Try)
 
-We combined the five rules show above with the three evaluation rules from the Chapter 9, each is  (E-App1), (E-App2) and (E-AppAbs), they are all list on figure 9-1 in textbook. They are all defined under the term 'application'
-which from lambda calculus.
+We combined the five rules show above with the three evaluation rules from the Chapter 9,
+each is  (E-App1), (E-App2) and (E-AppAbs), they are all list on figure 9-1 in textbook.
+They are all defined under the term 'application' which from lambda calculus.
 
 -- Typing Rules (only show part of the rules)
        Γ ⊢ error : T     (T-Error)
