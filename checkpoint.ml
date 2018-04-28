@@ -43,6 +43,13 @@ type exp =
   | App of exp * exp
 [@@deriving show {with_path = false}]
 
+
+let subst (x : string) (t : ty) (e2 : exp) (e1 : exp) : exp =
+  match unique_vars (App(Lam(x,t,e1),e2)) with
+  | App(Lam(x',_,e1'),e2') -> subst_r x' e2' e1'
+  | _ -> raise IMPOSSIBLE
+
+
 (* Values.
  * v ∈ value ⩴ true | false
  *           | ⟨v,v⟩
@@ -70,9 +77,41 @@ type result =
 let rec step (e0 : exp): result = match e0 with
   | True -> Val(VTrue)
   | False -> Val(VFalse)
-  | Var(x) ->
-  | Lam(var,e0) -> Val(Vlam(x,e))
-  | App(e,e) ->
+  | Var(_) -> Stuck
+  | Lam(var,e0) -> Val(VLam(var,e0))
+  | App(e1,e2) -> begin match step e1 with
+    | Val(v1) -> begin match step e2 with
+      | Val(v2) -> begin match v1 with
+        (* —————————————————————(β)
+         * (λx:τ.e)v —→ [x ↦ v]e
+         *)
+        | VLam(x,t,e) -> Step(subst x t (exp_of_value v2) e)
+        | _ -> Stuck
+        end
+      (*   e₂ —→ e₂′
+       * —————————————
+       * v₁ e₂ —→ v₁ e₂′
+       *)
+      | Step(e2') -> Step(App(e1,e2'))
+      | Stuck -> Stuck
+      end
+    (*    e₁ —→ e₁′
+     * ———————————————
+     * e₁ e₂ —→ e₁′ e₂
+     *)
+    | Step(e1') -> Step(App(e1',e2))
+    | Stuck -> Stuck
+    | Step(App(Error,e)) -> Step(Error)
+    | Step(App(v,Error)) -> Step(Error)
+    | Step(Error) -> Stuck
+    end
+  | TryWith(v1,e2) -> begin match step v1 with
+    | Step(v) -> Step(Val())
+    | Step() -> Step()
+    | Step(e1') -> Step(TryWith(e1',e2))
+    | Stuck -> Stuck
+    end
+
 (* The reflexive transitive closure of the small-step semantics relation *)
 let rec step_star (e : exp) (s : store) : exp * store = match step e s with
   | Val(v) -> (exp_of_val v,s)
@@ -101,7 +140,12 @@ let rec infer (e : exp) : ty = match e with
         if not (t1 = Bool) then Error else
         if not (t2 = t3) then Error else
         t2
-    |
+    | Terror(x) -> t
+    | Ttry(e1,e2) ->
+        let t1 = infer e1 in
+        let t2 = infer e2 in
+        if (t1 = t2) then t else Error
+
 
 
 let step_tests : test_block =
