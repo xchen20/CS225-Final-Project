@@ -1,36 +1,19 @@
-(* Name: <your name> *)
+(* Name: Xiaosong Chen & Wyatt Wu *)
 (* Course: UVM CS 225 Spring 2018 - Darais *)
-(* HW: HW4 *)
+(* HW: checkpoint*)
 
 open Util
 open StringSetMap
 
-(* The Assignment:
- *
- * Fill in the `raise TODO` parts of the code:
- * - 30 cases in the `step` function
- * - 5 cases in the `infer` function
- *
- * See the writeup for the specification for `step` and `infer` functions that
- * you must implement.
- *
- * Passing all of the tests does not guarantee 100%. You may want to write some
- * tests of your own.
- *)
 
 exception NOT_FOUND
 
-(* ℓ ∈ loc ≈ ℕ
- *)
 type var = string
 [@@deriving show {with_path = false}]
 
 (* Expressions.
  *
- * e ∈ exp ⩴ true | false | if(e){e}{e}
- *         | ⟨e,e⟩ | projl(e) | projr(e)
- *         | ref(e) | !e | e ≔ e | e ; e
- *         | loc(ℓ) | Error | Try t with t
+ * e ∈ exp ⩴ true | false | Error | Try t with t
  *)
 type exp =
   | True
@@ -44,16 +27,65 @@ type exp =
 [@@deriving show {with_path = false}]
 
 
-let subst (x : string) (t : ty) (e2 : exp) (e1 : exp) : exp =
-  match unique_vars (App(Lam(x,t,e1),e2)) with
-  | App(Lam(x',_,e1'),e2') -> subst_r x' e2' e1'
-  | _ -> raise IMPOSSIBLE
+(* Helper function for
+*  beta rule in lambda calculus
+*  Not finish yet, will still working on that.
+*  Enforces global uniqueness of variables.
+*)
+let unique_vars (e : exp) : exp =
+  let new_var (iO : int option) (x : string) : string = match iO with
+      | None -> x
+      | Some(i) -> x ^ string_of_int i
+  in
+  let next_var (iO : int option) : int option = match iO with
+      | None -> Some(1)
+      | Some(i) -> Some(i+1)
+  in
+  let rec rename_var_r
+    (iO : int option)
+    (x : string)
+    (g : string_set)
+    : string * string_set =
+      let x' = new_var iO x in
+      if StringSet.mem x' g
+      then rename_var_r (next_var iO) x g
+      else (x',StringSet.add x' g)
+  in
+  let rename_var = rename_var_r None in
+  let rec unique_vars_r
+    (e0 : exp)
+    (env : string string_map)
+    (g : string_set)
+    : exp * string_set =
+      match e0 with
+      | True -> (True,g)
+      | False -> (False,g)
+      | If(e1,e2,e3) ->
+          let (e1',g'1) = unique_vars_r e1 env g in
+          let (e2',g'2) = unique_vars_r e2 env g'1 in
+          let (e3',g'3) = unique_vars_r e3 env g'2 in
+          (If(e1',e2',e3'),g'3)
+      | Var(x) -> (Var(StringMap.find x env),g)
+      | Lam(x,t,e) ->
+          let (x',g') = rename_var x g in
+          let (e',g'') = unique_vars_r e (StringMap.add x x' env) g' in
+          (Lam(x',t,e'),g'')
+      | App(e1,e2) ->
+          let (e1',g') = unique_vars_r e1 env g in
+          let (e2',g'') = unique_vars_r e2 env g' in
+          (App(e1',e2'),g'')
+  in
+  let initial_env (ss : string_set) =
+    List.fold_right (fun x -> StringMap.add x x) (StringSet.elements ss) StringMap.empty
+  in
+  let fvs : string_set = free_vars e in
+  let (e',_) = unique_vars_r e (initial_env fvs) fvs in
+  e'
 
 
 (* Values.
  * v ∈ value ⩴ true | false
- *           | ⟨v,v⟩
- *           | loc(ℓ)
+ *           | Lam
  *)
 type value =
   | VTrue
@@ -74,6 +106,20 @@ type result =
   | Stuck
 [@@deriving show {with_path = false}]
 
+(* The small-step relation e —→ e
+ *
+ * Assumption: e is closed.
+ *
+ * If step(e) = v, then e is a value (and does not take a step).
+ * (i.e., e ∈ val)
+ *
+ * If step(e) = e′, then e steps to e′.
+ * (i.e., e —→ e′)
+ *
+ * If step(e) = stuck, then e is stuck, that is e is not a value and does not
+ * take a step.
+ * (i.e., e ∉ val and e —↛)
+ *)
 let rec step (e0 : exp): result = match e0 with
   | True -> Val(VTrue)
   | False -> Val(VFalse)
@@ -83,46 +129,59 @@ let rec step (e0 : exp): result = match e0 with
     | Val(v1) -> begin match step e2 with
       | Val(v2) -> begin match v1 with
         (* —————————————————————(β)
-         * (λx:τ.e)v —→ [x ↦ v]e
+         * (λx:τ.t)v —→ [x ↦ v]t
          *)
         | VLam(x,t,e) -> Step(subst x t (exp_of_value v2) e)
         | _ -> Stuck
         end
-      (*   e₂ —→ e₂′
+      (*   t₂ —→ t₂′
        * —————————————
        * v₁ e₂ —→ v₁ e₂′
        *)
       | Step(e2') -> Step(App(e1,e2'))
       | Stuck -> Stuck
       end
-    (*    e₁ —→ e₁′
+    (*    t₁ —→ t₁′
      * ———————————————
-     * e₁ e₂ —→ e₁′ e₂
+     * t₁ t₂ —→ t₁′ t₂
      *)
     | Step(e1') -> Step(App(e1',e2))
     | Stuck -> Stuck
+
+    (*  error t2 → error
+     *)
     | Step(App(Error,e)) -> Step(Error)
+
+    (*  v1 error → error
+     *)
     | Step(App(v,Error)) -> Step(Error)
     | Step(Error) -> Stuck
     end
   | TryWith(v1,e2) -> begin match step v1 with
-    | Step(v) -> Step(Val())
-    | Step() -> Step()
+    (*  try v1 with t2 → v1
+     *)
+    | Val(v1) -> Step(exp_of_val v1)
+    (* try error with t2 → t2
+     *)
+    | Val(Error) -> Step(exp_of_val e2)
+    (*     t1 →t′1
+     *  —————————————  → try t′1 with t2
+        try t1 with t2
+     *)
     | Step(e1') -> Step(TryWith(e1',e2))
     | Stuck -> Stuck
     end
 
 (* The reflexive transitive closure of the small-step semantics relation *)
-let rec step_star (e : exp) (s : store) : exp * store = match step e s with
-  | Val(v) -> (exp_of_val v,s)
-  | Step(e',s') -> step_star e' s'
-  | Stuck -> (e,s)
+let rec step_star (e : exp) : exp = match step e with
+  | Val(v) -> (exp_of_val v)
+  | Step(e') -> step_star e'
+  | Stuck -> (e)
 
 (* Types.
  *
  * τ ∈ ty ⩴ bool
- *        | τ × τ
- *        | ref(τ)
+ *        | Error
  *)
 type ty =
   | Bool
@@ -130,6 +189,7 @@ type ty =
 [@@deriving show {with_path = false}]
 
 
+(* Typing relation encoded as an inference metafunction. *)
 let rec infer (e : exp) : ty = match e with
     | True -> Bool
     | False -> Bool
@@ -140,14 +200,24 @@ let rec infer (e : exp) : ty = match e with
         if not (t1 = Bool) then Error else
         if not (t2 = t3) then Error else
         t2
+    (*
+     *  Γ ⊢error:T   (T-Error)
+     *)
     | Terror(x) -> t
+    (*
+    *  Γ ⊢t1 :T  Γ ⊢t2 :T
+    *    —————————————       (T-Try)
+    *  Γ ⊢tryt1 witht2 :T
+    *)
     | Ttry(e1,e2) ->
         let t1 = infer e1 in
         let t2 = infer e2 in
         if (t1 = t2) then t else Error
 
 
-
+(*
+* Test Caes: not done yet, we have to spend more time on testing make sure they are passed
+*)
 let step_tests : test_block =
   let s1 : store = [(1,VTrue);(2,VFalse)] in
   let s2 : store = [(1,VTrue);(2,VTrue)] in
@@ -223,4 +293,4 @@ let _ =
   _SHOW_PASSED_TESTS := false ;
   run_tests [step_tests;infer_tests]
 
-(* Name: <your name> *)
+(* Name: Xiaosong Chen & Wyatt Wu *)
